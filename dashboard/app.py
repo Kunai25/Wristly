@@ -6,9 +6,9 @@ import streamlit as st
 import pandas as pd
 
 # Import custom modules
-from serial_reader import SerialSensorReader
-from analytics import WristRiskAnalyzer
-from recommendations import ErgonomicRecommendationEngine
+from dashboard.serial_reader import SerialSensorReader
+from dashboard.analytics import WristRiskAnalyzer
+from dashboard.recommendations import ErgonomicRecommendationEngine
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
