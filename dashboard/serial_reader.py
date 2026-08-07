@@ -197,6 +197,9 @@ class SensorReader:
 
         if self.source_type == "simulation":
             self.source = SimulationSensorSource()
+        elif self.source_type == "wokwi":
+            from dashboard.wokwi_source import WokwiSensorSource
+            self.source = WokwiSensorSource(host="localhost", port=4000, timeout=timeout)
         else:
             self.source = SerialSensorSource(
                 port=port, baudrate=baudrate, timeout=timeout
@@ -232,4 +235,5 @@ class SerialSensorReader(SensorReader):
         timeout: float = 1.0,
     ) -> None:
         source = "simulation" if port.lower() in ("simulation", "sim") else "serial"
+        source = "wokwi" if port.lower() in ("wokwi", "wokwisim") else source
         super().__init__(port=port, baudrate=baudrate, timeout=timeout, source=source)

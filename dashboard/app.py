@@ -136,10 +136,16 @@ def main() -> None:
 
     # Main monitoring loop
     if st.session_state.monitoring:
-        status_placeholder.success(f"Connecting to {port}...")
+        if port.lower() in ("wokwi", "wokwisim"):
+            status_placeholder.success("Connecting to Wokwi simulation...")
+        else:
+            status_placeholder.success(f"Connecting to {port}...")
         try:
             reader = SerialSensorReader(port=port, baudrate=int(baudrate))
-            status_placeholder.success(f"Connected to {port}. Streaming live data...")
+            if port.lower() in ("wokwi", "wokwisim"):
+                status_placeholder.success("Connected to Wokwi simulation. Streaming live data...")
+            else:
+                status_placeholder.success(f"Connected to {port}. Streaming live data...")
             
             # Read and update loop
             for packet in reader.stream():
