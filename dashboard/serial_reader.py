@@ -215,6 +215,12 @@ class SensorReader:
             packet = self.read_packet()
             if packet is not None:
                 yield packet
+            else:
+                # Safety net: if a source ever returns None without blocking (e.g. a
+                # closed connection, a bad line), this stops the loop from spinning at
+                # 100% CPU. Sources that already block on read (serial timeout, socket
+                # timeout) are unaffected since they rarely hit this branch back-to-back.
+                time.sleep(0.02)
 
     def close(self) -> None:
         """Safely closes the active sensor source."""
