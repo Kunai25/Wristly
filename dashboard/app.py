@@ -140,26 +140,22 @@ def render_gauge_svg(risk_score: float, risk_level: str) -> str:
         if fraction > 0.002 else ""
     )
 
-    return f"""
-    <svg viewBox="0 0 200 200" width="100%" height="auto" style="max-width:230px; display:block; margin:0 auto;">
-      <defs>
-        <filter id="wrGlow" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="4" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" /><feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-      {zone_paths}
-      <path d="{track_path}" fill="none" stroke="{COLOR_TRACK}" stroke-width="14" stroke-linecap="round" />
-      {progress_el}
-      {cap_el}
-      <text x="100" y="96" text-anchor="middle" font-family="JetBrains Mono, monospace"
-            font-size="34" font-weight="700" fill="{COLOR_TEXT}">{percent}%</text>
-      <text x="100" y="118" text-anchor="middle" font-family="Space Grotesk, sans-serif"
-            font-size="11" font-weight="600" letter-spacing="1.5" fill="{color}">{style['label']}</text>
-    </svg>
-    """
+    # FIX: Flattened the SVG into a single concatenated string 
+    # to prevent Streamlit from turning indented lines into Markdown code blocks.
+    return (
+        f'<svg viewBox="0 0 200 200" width="100%" height="auto" style="max-width:230px; display:block; margin:0 auto;">'
+        f'<defs><filter id="wrGlow" x="-50%" y="-50%" width="200%" height="200%">'
+        f'<feGaussianBlur stdDeviation="4" result="blur" />'
+        f'<feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>'
+        f'</filter></defs>'
+        f'{zone_paths}'
+        f'<path d="{track_path}" fill="none" stroke="{COLOR_TRACK}" stroke-width="14" stroke-linecap="round" />'
+        f'{progress_el}'
+        f'{cap_el}'
+        f'<text x="100" y="96" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="34" font-weight="700" fill="{COLOR_TEXT}">{percent}%</text>'
+        f'<text x="100" y="118" text-anchor="middle" font-family="Space Grotesk, sans-serif" font-size="11" font-weight="600" letter-spacing="1.5" fill="{color}">{style["label"]}</text>'
+        f'</svg>'
+    )
 
 
 # ----------------------------------------------------------------------------
