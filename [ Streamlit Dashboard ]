@@ -1,0 +1,48 @@
+
+---
+
+## 3. Folder Responsibilities
+
+To maintain a clean, modular codebase, the repository is organized into the following directories:
+
+*   **`firmware/`**: Contains ESP32 microcontroller code only (C++/Arduino).
+*   **`dashboard/`**: Contains the Python application, including:
+    *   Serial data reader
+    *   Ergonomic analytics engine
+    *   Featherless AI integration
+    *   Streamlit user interface
+*   **`selfcad/`**: 3D assets and models for the physical wrist-worn enclosure.
+*   **`demo/`**: Demo assets, pre-recorded sensor logs, or mock data for presentation.
+*   **`screenshots/`**: Visual documentation and UI screenshots.
+
+---
+
+## 4. Component Responsibilities
+
+### A. Firmware (ESP32)
+The firmware is responsible for high-frequency data acquisition and basic sensor fusion. It must remain lightweight and performant:
+*   **Sensor Reading**: Read raw accelerometer and gyroscope data from the **MPU6050** sensor.
+*   **Simulated Heading**: Read an analog potentiometer connected to **GPIO34** to simulate wrist heading/yaw.
+*   **Sensor Fusion**: Compute wrist **pitch** and **roll** using a complementary filter to combine accelerometer stability with gyroscope responsiveness.
+*   **Data Transmission**: Output newline-delimited JSON packets over the serial port at a stable frequency of **20 Hz** (every 50ms).
+*   **Constraint**: The firmware **must NOT** perform any CTS detection, risk scoring, or AI inference.
+
+### B. Python Application (Dashboard & Analytics)
+The Python application handles data ingestion, complex analytics, AI processing, and visualization:
+*   **Serial Reader**: Asynchronously or synchronously read the 20 Hz JSON stream from the ESP32 serial port.
+*   **CTS Analytics**: Analyze wrist angles, movement velocity, and duration of sustained extreme postures.
+*   **Health Scoring**: Compute a real-time ergonomic health score (0-100) and categorize risk levels (Low, Medium, High).
+*   **Featherless AI Integration**: Send aggregated posture metrics to Featherless AI to generate natural language ergonomic coaching and behavioral recommendations.
+*   **Streamlit UI**: Provide an interactive, real-time dashboard displaying live wrist orientation, historical risk trends, and AI-generated advice.
+
+---
+
+## 5. Coding Standards
+
+All code written for the Wristly project must adhere to the following standards:
+
+*   **Modularity**: Keep files small and focused on a single responsibility (e.g., separate serial reading from UI rendering).
+*   **Type Safety**: Use Python type hints (`typing` module) for all function signatures.
+*   **Documentation**: Write clear, descriptive docstrings (Google or Sphinx style) for all classes and functions.
+*   **No Magic Numbers**: Define physical constants, pin numbers, sample rates, and threshold values as named constants at the top of files or in a configuration module.
+*   **Clean Code**: Avoid duplicated logic, keep functions short and readable, and handle exceptions gracefully (especially serial disconnects and API timeouts).
