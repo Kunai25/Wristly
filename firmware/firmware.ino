@@ -50,6 +50,7 @@ void setup() {
   initMPU6050();
   
   // Calibrate gyroscope while stationary
+  Serial.println("Keep wrist still for calibration...");
   calibrateGyro();
   
   // Configure potentiometer pin
@@ -61,7 +62,7 @@ void setup() {
 void loop() {
   unsigned long currentTime = millis();
   
-  // Maintain exactly 20Hz output rate (50ms interval)
+  // Maintain approximately 20Hz output rate (50ms interval)
   if (currentTime - lastSampleTime >= 50) {
     lastSampleTime = currentTime;
     
@@ -115,9 +116,9 @@ void calibrateGyro() {
     float taX, taY, taZ, tgX, tgY, tgZ;
     if (readSensorData(taX, taY, taZ, tgX, tgY, tgZ)) {
       // Add back the uncalibrated gyro values to sum them up
-      sumX += tgX + gyroBiasX;
-      sumY += tgY + gyroBiasY;
-      sumZ += tgZ + gyroBiasZ;
+      sumX += tgX;
+      sumY += tgY;
+      sumZ += tgZ;
       validSamples++;
     }
     delay(5);
