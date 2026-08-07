@@ -24,9 +24,19 @@ float pitch = 0.0;
 float roll = 0.0;
 unsigned long lastSampleTime = 0;
 
+// Gyroscope calibration biases
+float gyroBiasX = 0.0;
+float gyroBiasY = 0.0;
+float gyroBiasZ = 0.0;
+
+// Last valid sensor readings (used as fallback if I2C read fails)
+float ax = 0.0, ay = 0.0, az = 1.0;
+float gx = 0.0, gy = 0.0, gz = 0.0;
+
 // Function declarations
 void initMPU6050();
-void readSensorData(float &ax, float &ay, float &az, float &gx, float &gy, float &gz);
+void calibrateGyro();
+bool readSensorData(float &ax, float &ay, float &az, float &gx, float &gy, float &gz);
 void updateComplementaryFilter(float ax, float ay, float az, float gx, float gy);
 float readHeading();
 
@@ -38,6 +48,9 @@ void setup() {
   
   // Initialize MPU6050
   initMPU6050();
+  
+  // Calibrate gyroscope while stationary
+  calibrateGyro();
   
   // Configure potentiometer pin
   pinMode(POT_PIN, INPUT);
@@ -52,10 +65,7 @@ void loop() {
   if (currentTime - lastSampleTime >= 50) {
     lastSampleTime = currentTime;
     
-    float ax, ay, az;
-    float gx, gy, gz;
-    
-    // 1. Read raw sensor values
+    // 1. Read raw sensor values (updates variables only if read succeeds)
     readSensorData(ax, ay, az, gx, gy, gz);
     
     // 2. Calculate pitch and roll using complementary filter
@@ -88,17 +98,53 @@ void initMPU6050() {
   Wire.write(MPU6050_PWR_MGMT_1);
   Wire.write(0); // Set to 0 to wake up the MPU-6050
   Wire.endTransmission(true);
+  delay(100); // Wait for sensor to stabilize
+}
+
+/**
+ * Collects gyroscope samples while stationary to calculate and set calibration biases.
+ */
+void calibrateGyro() {
+  const int calibrationSamples = 200;
+  float sumX = 0.0;
+  float sumY = 0.0;
+  float sumZ = 0.0;
+  int validSamples = 0;
+
+  for (int i = 0; i < calibrationSamples; i++) {
+    float taX, taY, taZ, tgX, tgY, tgZ;
+    if (readSensorData(taX, taY, taZ, tgX, tgY, tgZ)) {
+      // Add back the uncalibrated gyro values to sum them up
+      sumX += tgX + gyroBiasX;
+      sumY += tgY + gyroBiasY;
+      sumZ += tgZ + gyroBiasZ;
+      validSamples++;
+    }
+    delay(5);
+  }
+
+  if (validSamples > 0) {
+    gyroBiasX = sumX / (float)validSamples;
+    gyroBiasY = sumY / (float)validSamples;
+    gyroBiasZ = sumZ / (float)validSamples;
+  }
 }
 
 /**
  * Reads raw accelerometer and gyroscope data from MPU6050 and converts them to physical units.
+ * Returns true if the read was successful, false otherwise.
  */
-void readSensorData(float &ax, float &ay, float &az, float &gx, float &gy, float &gz) {
+bool readSensorData(float &ax_out, float &ay_out, float &az_out, float &gx_out, float &gy_out, float &gz_out) {
   // Read 14 bytes starting from ACCEL_XOUT_H (accelerometer, temperature, gyroscope)
   Wire.beginTransmission(MPU6050_ADDR);
   Wire.write(MPU6050_ACCEL_XOUT_H);
-  Wire.endTransmission(false);
-  Wire.requestFrom(MPU6050_ADDR, 14, true);
+  if (Wire.endTransmission(false) != 0) {
+    return false; // I2C Transmission failed
+  }
+  
+  if (Wire.requestFrom(MPU6050_ADDR, 14, true) != 14) {
+    return false; // Failed to receive 14 bytes
+  }
   
   int16_t rawAx = (Wire.read() << 8) | Wire.read();
   int16_t rawAy = (Wire.read() << 8) | Wire.read();
@@ -113,13 +159,16 @@ void readSensorData(float &ax, float &ay, float &az, float &gx, float &gy, float
   int16_t rawGz = (Wire.read() << 8) | Wire.read();
   
   // Convert raw values to physical units (g for accel, deg/s for gyro)
-  ax = (float)rawAx / ACCEL_SCALE;
-  ay = (float)rawAy / ACCEL_SCALE;
-  az = (float)rawAz / ACCEL_SCALE;
+  ax_out = (float)rawAx / ACCEL_SCALE;
+  ay_out = (float)rawAy / ACCEL_SCALE;
+  az_out = (float)rawAz / ACCEL_SCALE;
   
-  gx = (float)rawGx / GYRO_SCALE;
-  gy = (float)rawGy / GYRO_SCALE;
-  gz = (float)rawGz / GYRO_SCALE;
+  // Convert gyro and subtract calibration biases
+  gx_out = ((float)rawGx / GYRO_SCALE) - gyroBiasX;
+  gy_out = ((float)rawGy / GYRO_SCALE) - gyroBiasY;
+  gz_out = ((float)rawGz / GYRO_SCALE) - gyroBiasZ;
+
+  return true;
 }
 
 /**
@@ -127,6 +176,8 @@ void readSensorData(float &ax, float &ay, float &az, float &gx, float &gy, float
  * 
  * The complementary filter combines:
  * 1. Gyroscope integration: High-pass filtered. Accurate in the short term, but drifts over time.
+ *    - Gyroscope Y (gy) is integrated for pitch.
+ *    - Gyroscope X (gx) is integrated for roll.
  * 2. Accelerometer tilt: Low-pass filtered. Noisy in the short term due to movement, but stable in the long term.
  * 
  * Formula: Angle = ALPHA * (Angle + GyroRate * DT) + (1 - ALPHA) * AccelAngle
@@ -138,9 +189,10 @@ void updateComplementaryFilter(float ax, float ay, float az, float gx, float gy)
   float accelPitch = atan2(-ax, sqrt(ay * ay + az * az)) * RAD_TO_DEG_CONST;
   float accelRoll = atan2(ay, az) * RAD_TO_DEG_CONST;
   
-  // Apply complementary filter
-  pitch = ALPHA * (pitch + gx * DT) + (1.0 - ALPHA) * accelPitch;
-  roll = ALPHA * (roll + gy * DT) + (1.0 - ALPHA) * accelRoll;
+  // Apply complementary filter with corrected axis mapping:
+  // Gyro Y integrates into pitch, Gyro X integrates into roll.
+  pitch = ALPHA * (pitch + gy * DT) + (1.0 - ALPHA) * accelPitch;
+  roll = ALPHA * (roll + gx * DT) + (1.0 - ALPHA) * accelRoll;
 }
 
 /**
