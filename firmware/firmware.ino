@@ -5,6 +5,7 @@
 #define I2C_SDA_PIN 21
 #define I2C_SCL_PIN 22
 #define POT_PIN 34
+#define BUZZER_PIN 25
 
 // --- MPU6050 Register Map ---
 #define MPU6050_ADDR         0x68
@@ -19,10 +20,33 @@ const float GYRO_SCALE = 131.0;     // LSB/(deg/s) for +/- 250 deg/s range
 const float ALPHA = 0.98;           // Complementary filter coefficient
 const float DT = 0.05;              // Sample period in seconds (20Hz)
 
+// --- Strain / Buzzer Alert Constants ---
+// These mirror dashboard/analytics.py's WristRiskAnalyzer thresholds
+// (NEUTRAL_THRESHOLD_DEG / MODERATE_THRESHOLD_DEG) so an on-device
+// "MEDIUM"/"HIGH" alert always matches what the dashboard is showing.
+const float MEDIUM_STRAIN_THRESHOLD_DEG = 15.0;
+const float HIGH_STRAIN_THRESHOLD_DEG   = 30.0;
+
+// "Prolonged" strain: how long a deviation has to be sustained,
+// continuously, before it counts as strain worth alerting on.
+const unsigned long MEDIUM_STRAIN_DURATION_MS = 15000; // 15s of moderate bend
+const unsigned long HIGH_STRAIN_DURATION_MS   = 5000;  // 5s of severe bend
+
+// Minimum time between two buzzer alerts, regardless of level. Prevents
+// alarm fatigue — if the wrist stays bent, the buzzer reminds periodically
+// every ALERT_COOLDOWN_MS rather than beeping continuously.
+const unsigned long ALERT_COOLDOWN_MS = 20000; // 20s
+
 // --- Global Variables ---
 float pitch = 0.0;
 float roll = 0.0;
 unsigned long lastSampleTime = 0;
+
+// Strain-tracking state for the buzzer
+bool inStrain = false;              // true while |pitch| or |roll| exceeds MEDIUM threshold
+unsigned long strainStartTime = 0;  // millis() timestamp when the current strain streak began
+unsigned long lastAlertTime = 0;    // millis() timestamp of the last buzzer alert (0 = none yet)
+int lastAlertLevel = 0;             // 0 = none, 1 = MEDIUM, 2 = HIGH — reported in telemetry
 
 // Gyroscope calibration biases
 float gyroBiasX = 0.0;
@@ -39,6 +63,9 @@ void calibrateGyro();
 bool readSensorData(float &ax, float &ay, float &az, float &gx, float &gy, float &gz);
 void updateComplementaryFilter(float ax, float ay, float az, float gx, float gy);
 float readHeading();
+void updateStrainAndBuzzer(unsigned long currentTime);
+void soundMediumAlert();
+void soundHighAlert();
 
 void setup() {
   Serial.begin(115200);
@@ -55,7 +82,11 @@ void setup() {
   
   // Configure potentiometer pin
   pinMode(POT_PIN, INPUT);
-  
+
+  // Configure buzzer pin (starts silent)
+  pinMode(BUZZER_PIN, OUTPUT);
+  noTone(BUZZER_PIN);
+
   lastSampleTime = millis();
 }
 
@@ -74,8 +105,13 @@ void loop() {
     
     // 3. Read potentiometer and map to simulated heading
     float heading = readHeading();
-    
-    // 4. Output newline-delimited JSON
+
+    // 4. Evaluate sustained strain and fire the buzzer if warranted
+    updateStrainAndBuzzer(currentTime);
+
+    // 5. Output newline-delimited JSON
+    // "alert" reports what the buzzer last fired for this loop iteration:
+    // "none", "medium", or "high" — so the dashboard can display it too.
     Serial.print("{");
     Serial.print("\"timestamp\":"); Serial.print(currentTime); Serial.print(",");
     Serial.print("\"pitch\":"); Serial.print(pitch, 2); Serial.print(",");
@@ -86,7 +122,12 @@ void loop() {
     Serial.print("\"az\":"); Serial.print(az, 4); Serial.print(",");
     Serial.print("\"gx\":"); Serial.print(gx, 4); Serial.print(",");
     Serial.print("\"gy\":"); Serial.print(gy, 4); Serial.print(",");
-    Serial.print("\"gz\":"); Serial.print(gz, 4);
+    Serial.print("\"gz\":"); Serial.print(gz, 4); Serial.print(",");
+    Serial.print("\"alert\":\"");
+    if (lastAlertLevel == 2) Serial.print("high");
+    else if (lastAlertLevel == 1) Serial.print("medium");
+    else Serial.print("none");
+    Serial.print("\"");
     Serial.println("}");
   }
 }
@@ -209,4 +250,73 @@ float readHeading() {
   // ESP32 ADC is 12-bit (0 - 4095)
   float heading = (float)rawPot * 360.0 / 4095.0;
   return heading;
+}
+
+/**
+ * Tracks how long the wrist has continuously been bent past the MEDIUM
+ * threshold, and fires the buzzer once that streak crosses the MEDIUM or
+ * HIGH duration threshold — subject to a shared cooldown so it reminds
+ * periodically instead of nagging continuously.
+ *
+ * Reset behavior: the streak resets the moment the wrist returns to a
+ * neutral posture (below MEDIUM_STRAIN_THRESHOLD_DEG). This rewards
+ * taking a break — even a brief one — with a clean slate, rather than
+ * accumulating strain across the whole session.
+ */
+void updateStrainAndBuzzer(unsigned long currentTime) {
+  float maxDeviation = max(fabs(pitch), fabs(roll));
+  lastAlertLevel = 0; // default: nothing fired this loop iteration
+
+  if (maxDeviation <= MEDIUM_STRAIN_THRESHOLD_DEG) {
+    // Neutral posture — clear the strain streak and do nothing else.
+    inStrain = false;
+    strainStartTime = 0;
+    return;
+  }
+
+  // Wrist is bent past the MEDIUM threshold. Start (or continue) the streak.
+  if (!inStrain) {
+    inStrain = true;
+    strainStartTime = currentTime;
+  }
+  unsigned long strainDuration = currentTime - strainStartTime;
+
+  bool cooldownElapsed = (lastAlertTime == 0) ||
+                          (currentTime - lastAlertTime >= ALERT_COOLDOWN_MS);
+  if (!cooldownElapsed) {
+    return; // still within the cooldown window since the last alert
+  }
+
+  if (maxDeviation > HIGH_STRAIN_THRESHOLD_DEG && strainDuration >= HIGH_STRAIN_DURATION_MS) {
+    soundHighAlert();
+    lastAlertTime = currentTime;
+    lastAlertLevel = 2;
+  } else if (strainDuration >= MEDIUM_STRAIN_DURATION_MS) {
+    soundMediumAlert();
+    lastAlertTime = currentTime;
+    lastAlertLevel = 1;
+  }
+}
+
+/**
+ * Gentle single beep — moderate, sustained deviation. A soft nudge.
+ * Uses tone()/delay() for simplicity; the ~150ms pause is a deliberate
+ * trade-off (a couple of skipped 50ms sensor samples) for simple,
+ * easy-to-follow code, since it fires at most once every cooldown window.
+ */
+void soundMediumAlert() {
+  tone(BUZZER_PIN, 1500, 120);
+  delay(150);
+  noTone(BUZZER_PIN);
+}
+
+/**
+ * Urgent triple beep — severe, sustained deviation.
+ */
+void soundHighAlert() {
+  for (int i = 0; i < 3; i++) {
+    tone(BUZZER_PIN, 2500, 100);
+    delay(130);
+  }
+  noTone(BUZZER_PIN);
 }

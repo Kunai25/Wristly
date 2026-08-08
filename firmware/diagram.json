@@ -5,7 +5,8 @@
   "parts": [
     { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
     { "type": "wokwi-mpu6050", "id": "imu1", "top": -110, "left": 220, "attrs": {} },
-    { "type": "wokwi-potentiometer", "id": "pot1", "top": 110, "left": 220, "attrs": {} }
+    { "type": "wokwi-potentiometer", "id": "pot1", "top": 110, "left": 220, "attrs": {} },
+    { "type": "wokwi-buzzer", "id": "bz1", "top": 0, "left": -140, "attrs": { "volume": "0.1" } }
   ],
   "connections": [
     [ "esp:TX0", "$serialMonitor:RX", "", [] ],
@@ -18,7 +19,10 @@
 
     [ "pot1:VCC", "esp:3V3", "red", [] ],
     [ "pot1:GND", "esp:GND.2", "black", [] ],
-    [ "pot1:SIG", "esp:D34", "orange", [] ]
+    [ "pot1:SIG", "esp:D34", "orange", [] ],
+
+    [ "bz1:1", "esp:D25", "blue", [] ],
+    [ "bz1:2", "esp:GND.3", "black", [] ]
   ],
   "dependencies": {}
 }
