@@ -307,8 +307,6 @@ def main() -> None:
     st.markdown('<div class="wr-section-label">Live Wrist Tracking</div>', unsafe_allow_html=True)
     chart_placeholder = st.empty()
 
-    def classify_wrist_status(pitch: float, roll: float) -> tuple[str, str]:
-        """Classifies pitch & roll angles into posture status and an indicator icon."""
 
     def render_static_frame() -> None:
         """Renders the dashboard using the last-known values."""
