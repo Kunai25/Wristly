@@ -1,41 +1,3 @@
-"""
-YouCam (Perfect Corp) Watch Virtual Try-On — Wristly demo script
-==================================================================
-
-WHY THIS RUNS ON YOUR MACHINE, NOT MINE:
-My sandbox's network can't reach yce-api-01.makeupar.com. Same deal
-as arduino-cli/Wokwi — I write it, you run it.
-
-WHAT'S CONFIRMED vs. WHAT'S AN EDUCATED GUESS
------------------------------------------------
-Confirmed (from your notes + Perfect Corp's public docs for the
-sibling Shoes / Beard-style / Face-swap APIs, which share this exact
-V2.0 pattern):
-  - Base URL: https://yce-api-01.makeupar.com
-  - Auth: `Authorization: Bearer YOUR_API_KEY` header
-  - Flow: POST /s2s/v2.0/file/<category> to register a file
-          -> response gives a file_id + a presigned upload URL
-          -> PUT the raw image bytes to that URL
-          -> POST /s2s/v2.0/task/<category> with the file_id(s) to
-             start the AI task -> response gives a task_id
-          -> GET /s2s/v2.0/task/<category>/<task_id> repeatedly
-             until status is "success" or "error"
-
-NOT confirmed — I could not load Perfect Corp's Watch-specific
-reference page (it's JS-rendered and needs your logged-in console
-session). These are educated guesses based on the identical Shoes
-API, which uses `src_file_id`/`src_file_url` for the user photo and
-`ref_file_id`/`ref_file_url` for the product photo:
-  - CATEGORY = "watch"            (could be "watch-try-on" or similar)
-  - The exact JSON field names in the /task/watch body
-
-BEFORE SPENDING REAL API UNITS:
-Open https://docs.perfectcorp.com/develop/api_playground (or use the
-"Ask AI" button on docs.perfectcorp.com) and confirm the CATEGORY
-string and the task body field names below. Everything else in this
-script should work as-is once those two things are right.
-"""
-
 import os
 import sys
 import time
@@ -43,31 +5,30 @@ import json
 import mimetypes
 import requests
 
-# ── CONFIG ──────────────────────────────────────────────────────────
-API_KEY = os.environ.get("YOUCAM_API_KEY", "PASTE_YOUR_API_KEY_HERE")
+API_KEY = os.environ.get("YOUCAM_API_KEY")
+
 BASE_URL = "https://yce-api-01.makeupar.com"
 
-# UNCONFIRMED — verify this against the Watch endpoint docs/playground
-CATEGORY = "watch"
-
-# Paths to your two local images
-WRIST_PHOTO_PATH = "wrist_photo.jpg"      # back of wrist, all 5 fingers, unobstructed
-PRODUCT_PHOTO_PATH = "wristly_render.jpg"  # the clean isolated product render
+WRIST_PHOTO_PATH = "tryon/wrist_photo.png"
+PRODUCT_PHOTO_PATH = "tryon/wristly_render.png"
 
 POLL_INTERVAL_SECONDS = 3
 POLL_TIMEOUT_SECONDS = 120
-OUTPUT_PATH = "wristly_tryon_result.jpg"
+
+OUTPUT_PATH = "tryon/wristly_tryon_result.jpg"
 
 
-# ── STEP 1: register a file, get file_id + upload URL ───────────────
-def register_file(path: str) -> tuple[str, str]:
-    """POST /s2s/v2.0/file/<category> -> (file_id, upload_url)"""
+def register_file(path: str) -> tuple[str, str, dict]:
+    """Register a local image and return (file_id, upload_url)."""
+
     content_type, _ = mimetypes.guess_type(path)
-    content_type = content_type or "image/jpeg"
+    content_type = content_type or "image/png"
+
     file_size = os.path.getsize(path)
     file_name = os.path.basename(path)
 
-    url = f"{BASE_URL}/s2s/v2.0/file/{CATEGORY}"
+    url = f"{BASE_URL}/s2s/v2.0/file/2d-vto/bracelet"
+
     body = {
         "files": [
             {
@@ -77,7 +38,8 @@ def register_file(path: str) -> tuple[str, str]:
             }
         ]
     }
-    resp = requests.post(
+
+    response = requests.post(
         url,
         headers={
             "Authorization": f"Bearer {API_KEY}",
@@ -86,44 +48,94 @@ def register_file(path: str) -> tuple[str, str]:
         json=body,
         timeout=30,
     )
-    resp.raise_for_status()
-    data = resp.json()
-    print(f"[register_file] {file_name} -> {json.dumps(data)[:300]}")
 
-    # UNCONFIRMED response shape — adjust the two lines below once you
-    # see the real response. Perfect Corp's other file APIs return
-    # something like: {"result": {"files": [{"file_id": "...", "url": "..."}]}}
-    file_entry = data["result"]["files"][0]
+    if not response.ok:
+        print("File registration failed:")
+        print(response.text)
+        response.raise_for_status()
+
+    data = response.json()
+
+    print("[register_file]")
+    print(json.dumps(data, indent=2)[:2000])
+
+    # Perfect Corp V2 file APIs return the registered file
+    # and its presigned upload URL.
+    files = data["data"]["files"]
+    file_entry = files[0]
+
     file_id = file_entry["file_id"]
-    upload_url = file_entry["url"]
+
+    upload_request = file_entry["requests"][0]
+    upload_url = upload_request["url"]
+    upload_headers = upload_request["headers"]
+
+    return file_id, upload_url, upload_headers
+
     return file_id, upload_url
 
 
-# ── STEP 2: upload the raw bytes to the presigned URL ────────────────
-def upload_file(upload_url: str, path: str) -> None:
-    with open(path, "rb") as f:
-        resp = requests.put(upload_url, data=f, timeout=60)
-    resp.raise_for_status()
-    print(f"[upload_file] uploaded {path} -> status {resp.status_code}")
+def upload_file(
+    upload_url: str,
+    upload_headers: dict,
+    path: str,
+) -> None:
+    with open(path, "rb") as file:
+        response = requests.put(
+            upload_url,
+            headers=upload_headers,
+            data=file,
+            timeout=60,
+        )
+
+    if not response.ok:
+        print("File upload failed:")
+        print(response.text)
+        response.raise_for_status()
+
+    print(f"Uploaded: {path}")
+
+    if not response.ok:
+        print("File upload failed:")
+        print(response.text)
+        response.raise_for_status()
+
+    print(f"Uploaded: {path}")
 
 
-# ── STEP 3: create the AI task ───────────────────────────────────────
 def create_task(src_file_id: str, ref_file_id: str) -> str:
-    """POST /s2s/v2.0/task/<category> -> task_id
+    """Create the YouCam Bracelet Virtual Try-On task."""
 
-    UNCONFIRMED body shape. Modeled on the Shoes API, which uses:
-      { "src_file_id": "...", "ref_file_id": "..." }
-    (src = the person/wrist photo, ref = the product photo)
-    Some sibling APIs (face-swap) instead use a nested
-    "payload": {"file_sets": {"src_ids": [...], "ref_ids": [...]}}
-    shape — if the flat version below 404s or 400s, try that shape.
-    """
-    url = f"{BASE_URL}/s2s/v2.0/task/{CATEGORY}"
+    url = f"{BASE_URL}/s2s/v2.0/task/2d-vto/bracelet"
+
     body = {
         "src_file_id": src_file_id,
-        "ref_file_id": ref_file_id,
+        "source_info": {
+            "name": src_file_id
+        },
+        "ref_file_urls": [],
+        "ref_file_ids": [
+            ref_file_id
+        ],
+        "refmsk_file_urls": [],
+        "refmsk_file_ids": [],
+        "object_infos": [
+            {
+                "name": ref_file_id,
+                "parameter": {
+                    "bracelet_need_remove_background": False,
+                    "bracelet_wearing_location": 0,
+                    "bracelet_shadow_intensity": 0.3,
+                    "bracelet_ambient_light_intensity": 1
+                }
+            }
+        ]
     }
-    resp = requests.post(
+
+    print("[create_task] Request:")
+    print(json.dumps(body, indent=2))
+
+    response = requests.post(
         url,
         headers={
             "Authorization": f"Bearer {API_KEY}",
@@ -132,84 +144,195 @@ def create_task(src_file_id: str, ref_file_id: str) -> str:
         json=body,
         timeout=30,
     )
-    resp.raise_for_status()
-    data = resp.json()
-    print(f"[create_task] -> {json.dumps(data)[:300]}")
 
-    # UNCONFIRMED — adjust once you see the real response shape
+    if not response.ok:
+        print("Task creation failed:")
+        print(response.text)
+        response.raise_for_status()
+
+    data = response.json()
+
+    print("[create_task] Response:")
+    print(json.dumps(data, indent=2))
+
     task_id = data["data"]["task_id"]
+
+    print(f"Task ID: {task_id}")
+
     return task_id
 
 
-# ── STEP 4: poll until done ──────────────────────────────────────────
 def poll_task(task_id: str) -> dict:
-    url = f"{BASE_URL}/s2s/v2.0/task/{CATEGORY}/{task_id}"
-    headers = {"Authorization": f"Bearer {API_KEY}"}
+    """Poll until the Bracelet VTO task succeeds or fails."""
+
+    url = f"{BASE_URL}/s2s/v2.0/task/2d-vto/bracelet/{task_id}"
+
+    headers = {
+        "Authorization": f"Bearer {API_KEY}"
+    }
 
     waited = 0
+
     while waited < POLL_TIMEOUT_SECONDS:
-        resp = requests.get(url, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        status = data.get("data", {}).get("status") or data.get("status")
-        print(f"[poll_task] status={status} ({waited}s elapsed)")
+
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=30,
+        )
+
+        if not response.ok:
+            print("Task polling failed:")
+            print(response.text)
+            response.raise_for_status()
+
+        data = response.json()
+
+        print(
+            f"[poll_task] {waited}s:"
+        )
+        print(json.dumps(data, indent=2)[:2000])
+
+        task_data = data.get("data", {})
+
+        status = (
+            task_data.get("task_status")
+            or task_data.get("status")
+            or data.get("task_status")
+            or data.get("status")
+        )
 
         if status == "success":
             return data
+
         if status == "error":
-            raise RuntimeError(f"Task failed: {json.dumps(data)}")
+            raise RuntimeError(
+                "YouCam task failed:\n"
+                + json.dumps(data, indent=2)
+            )
 
         time.sleep(POLL_INTERVAL_SECONDS)
         waited += POLL_INTERVAL_SECONDS
 
-    raise TimeoutError(f"Task {task_id} did not finish within {POLL_TIMEOUT_SECONDS}s")
-
-
-# ── STEP 5: download the result image ────────────────────────────────
-def download_result(result_data: dict, out_path: str) -> None:
-    # UNCONFIRMED field name for the result URL — commonly
-    # data["data"]["result_url"] or a list under "results"
-    result_url = (
-        result_data.get("data", {}).get("result_url")
-        or result_data.get("data", {}).get("results", [{}])[0].get("url")
+    raise TimeoutError(
+        f"Task {task_id} did not finish within "
+        f"{POLL_TIMEOUT_SECONDS} seconds."
     )
+
+
+def find_result_url(data: dict) -> str | None:
+    """Try the common result URL locations returned by VTO APIs."""
+
+    task_data = data.get("data", {})
+
+    candidates = [
+        task_data.get("result_url"),
+        task_data.get("image_url"),
+        data.get("result_url"),
+        data.get("image_url"),
+    ]
+
+    results = task_data.get("results")
+
+    if isinstance(results, list):
+        for result in results:
+            if isinstance(result, dict):
+                candidates.extend(
+                    [
+                        result.get("url"),
+                        result.get("result_url"),
+                        result.get("image_url"),
+                    ]
+                )
+
+    for url in candidates:
+        if isinstance(url, str) and url.startswith("http"):
+            return url
+
+    return None
+
+
+def download_result(result_data: dict, out_path: str) -> None:
+    """Download the generated YouCam result image."""
+
+    result_url = (
+        result_data
+        .get("data", {})
+        .get("results", {})
+        .get("url")
+    )
+
     if not result_url:
-        print("Could not find a result URL automatically. Full response:")
+        print("Could not find a result image URL.")
+        print("Full response:")
         print(json.dumps(result_data, indent=2))
         return
 
-    resp = requests.get(result_url, timeout=60)
-    resp.raise_for_status()
+    print("Downloading result image...")
+
+    response = requests.get(result_url, timeout=60)
+    response.raise_for_status()
+
     with open(out_path, "wb") as f:
-        f.write(resp.content)
-    print(f"Saved result image to {out_path}")
+        f.write(response.content)
+
+    print(f"Saved result image to: {out_path}")
 
 
-def main():
-    if API_KEY == "PASTE_YOUR_API_KEY_HERE":
-        print("Set YOUCAM_API_KEY as an environment variable, or edit API_KEY above.")
+def main() -> None:
+
+    if not API_KEY:
+        print("YOUCAM_API_KEY is not set.")
+        print()
+        print('Run:')
+        print('$env:YOUCAM_API_KEY = "YOUR_KEY"')
         sys.exit(1)
 
-    for p in (WRIST_PHOTO_PATH, PRODUCT_PHOTO_PATH):
-        if not os.path.exists(p):
-            print(f"Missing file: {p} — update the path constants at the top of this script.")
+    for path in (
+        WRIST_PHOTO_PATH,
+        PRODUCT_PHOTO_PATH,
+    ):
+        if not os.path.exists(path):
+            print(f"Missing file: {path}")
             sys.exit(1)
 
-    print("Registering wrist photo...")
-    src_file_id, src_upload_url = register_file(WRIST_PHOTO_PATH)
-    upload_file(src_upload_url, WRIST_PHOTO_PATH)
+    src_file_id, src_upload_url, src_upload_headers = register_file(
+        WRIST_PHOTO_PATH
+    )
 
-    print("Registering product photo...")
-    ref_file_id, ref_upload_url = register_file(PRODUCT_PHOTO_PATH)
-    upload_file(ref_upload_url, PRODUCT_PHOTO_PATH)
+    upload_file(
+    src_upload_url,
+    src_upload_headers,
+        WRIST_PHOTO_PATH,
+    )
 
-    print("Creating try-on task...")
-    task_id = create_task(src_file_id, ref_file_id)
+    print()
+    print("Registering Wristly product image...")
+    ref_file_id, ref_upload_url, ref_upload_headers = register_file(
+        PRODUCT_PHOTO_PATH
+    )
 
-    print("Polling for result...")
-    result_data = poll_task(task_id)
+    upload_file(
+        ref_upload_url,
+        ref_upload_headers,
+        PRODUCT_PHOTO_PATH,
+        )
 
-    download_result(result_data, OUTPUT_PATH)
+    print()
+    print("Creating Bracelet Virtual Try-On task...")
+
+    task_id = create_task(
+        src_file_id,
+        ref_file_id,
+    )
+
+    print(f"Task ID: {task_id}")
+    print()
+    print("Processing...")
+
+    result = poll_task(task_id)
+
+    download_result(result, OUTPUT_PATH)
 
 
 if __name__ == "__main__":
