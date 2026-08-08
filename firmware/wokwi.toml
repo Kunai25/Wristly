@@ -1,0 +1,11 @@
+[wokwi]
+version = 1
+# Compiled with Arduino CLI (see README/setup notes for the exact command).
+# These paths assume: arduino-cli compile --fqbn esp32:esp32:esp32 . --output-dir build
+firmware = 'build/firmware.ino.bin'
+elf = 'build/firmware.ino.elf'
+
+# Exposes the simulated ESP32's serial port over TCP on localhost:4000 using the
+# RFC2217 protocol, while the "Wokwi for VS Code" extension is running the simulation.
+# dashboard/wokwi_source.py connects to this exact host:port.
+rfc2217ServerPort = 4000
