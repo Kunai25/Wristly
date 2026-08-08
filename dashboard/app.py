@@ -92,7 +92,14 @@ div.block-container {padding-top: 1.6rem; padding-bottom: 2.5rem;}
     "danger": COLOR_DANGER, "surface": "#161F24",
 }
 
-
+def classify_wrist_status(pitch: float, roll: float) -> tuple[str, str]:
+    """Classifies pitch & roll angles into posture status and an indicator icon."""
+    if abs(pitch) < 15 and abs(roll) < 15:
+        return "Neutral", "✓"
+    elif abs(pitch) > 30 or abs(roll) > 30:
+        return "High Strain", "⚠️"
+    else:
+        return "Moderate Strain", "⚡"
 # ----------------------------------------------------------------------------
 # Gauge rendering
 # ----------------------------------------------------------------------------
@@ -140,7 +147,7 @@ def render_gauge_svg(risk_score: float, risk_level: str) -> str:
         if fraction > 0.002 else ""
     )
 
-    return f"""
+    svg_str = f"""
     <svg viewBox="0 0 200 200" width="100%" height="auto" style="max-width:230px; display:block; margin:0 auto;">
       <defs>
         <filter id="wrGlow" x="-50%" y="-50%" width="200%" height="200%">
@@ -160,25 +167,31 @@ def render_gauge_svg(risk_score: float, risk_level: str) -> str:
             font-size="11" font-weight="600" letter-spacing="1.5" fill="{color}">{style['label']}</text>
     </svg>
     """
+    
+    # Strips all newlines so indented lines aren't rendered as plain text in Streamlit
+    return svg_str.replace("\n", " ")
 
 
 # ----------------------------------------------------------------------------
 # Presentation helpers (display-only — analytics.py stays untouched)
 # ----------------------------------------------------------------------------
-def classify_wrist_status(pitch: float, roll: float) -> Tuple[str, str]:
-    """Maps pitch/roll into a human-readable posture label. Purely presentational."""
-    ext, flex, rad, uln = pitch > 15, pitch < -15, roll > 15, roll < -15
-    if (ext or flex) and (rad or uln):
-        return "Combined Strain", "⚠️"
-    if ext:
-        return "Extension", "↗"
-    if flex:
-        return "Flexion", "↘"
-    if rad:
-        return "Radial Deviation", "↷"
-    if uln:
-        return "Ulnar Deviation", "↶"
-    return "Neutral", "✓"
+def classify_wrist_status(pitch, roll) -> tuple[str, str]:
+    """Classifies pitch & roll angles safely, handling None, NaN, or unexpected types."""
+    try:
+        if pitch is None or roll is None:
+            return "Neutral", "✓"
+        
+        p = float(pitch)
+        r = float(roll)
+        
+        if abs(p) < 15 and abs(r) < 15:
+            return "Neutral", "✓"
+        elif abs(p) > 30 or abs(r) > 30:
+            return "High Strain", "⚠️"
+        else:
+            return "Moderate Strain", "⚡"
+    except Exception:
+        return "Neutral", "✓"
 
 
 def trend_arrow(current: float, previous: float) -> str:
@@ -294,8 +307,11 @@ def main() -> None:
     st.markdown('<div class="wr-section-label">Live Wrist Tracking</div>', unsafe_allow_html=True)
     chart_placeholder = st.empty()
 
+    def classify_wrist_status(pitch: float, roll: float) -> tuple[str, str]:
+        """Classifies pitch & roll angles into posture status and an indicator icon."""
+
     def render_static_frame() -> None:
-        """Renders the dashboard using the last-known values (used before Start / after Stop)."""
+        """Renders the dashboard using the last-known values."""
         header_placeholder.markdown(
             f'<div class="wr-header"><div class="wr-brand"><h1>🦾 WRISTLY</h1>'
             f'<span>AI Wrist Health Monitor</span></div>'
@@ -304,19 +320,31 @@ def main() -> None:
         )
         style = RISK_STYLE.get(st.session_state.last_risk_level, RISK_STYLE["LOW"])
         with gauge_placeholder.container():
-            st.markdown(f'<div class="wr-card">{render_gauge_svg(st.session_state.last_risk_score, st.session_state.last_risk_level)}'
-                        f'<div style="text-align:center; color:{COLOR_MUTED}; font-size:0.8rem; margin-top:0.4rem;">'
-                        f'{style["sub"]}</div></div>', unsafe_allow_html=True)
+            card_html = (
+                f'<div class="wr-card">'
+                f'{render_gauge_svg(st.session_state.last_risk_score, st.session_state.last_risk_level)}'
+                f'<div style="text-align:center; color:#888; font-size:0.8rem; margin-top:0.4rem;">'
+                f'{style["sub"]}</div></div>'
+            )
+            st.markdown(card_html.replace("\n", " "), unsafe_allow_html=True)
 
-        wrist_label, wrist_icon = classify_wrist_status(st.session_state.last_pitch, st.session_state.last_roll)
+        # Calculates label and icon dynamically
+        # Safe extraction guarding against any NoneType or unpacking errors
+        status_result = classify_wrist_status(
+            getattr(st.session_state, 'last_pitch', 0),
+            getattr(st.session_state, 'last_roll', 0)
+        )
+        if status_result and isinstance(status_result, tuple) and len(status_result) == 2:
+            wrist_label, wrist_icon = status_result
+        else:
+            wrist_label, wrist_icon = "Neutral", "✓"
+        
         with readout_placeholder.container():
             c1, c2, c3 = st.columns(3)
             for col, title, value, sub in (
                 (c1, "Wrist Status", f"{wrist_icon} {wrist_label}", "Posture classification"),
-                (c2, "Pitch", f'{st.session_state.last_pitch:.1f}°'
-                              f'{trend_arrow(st.session_state.last_pitch, st.session_state.prev_pitch)}', "Up / down flex"),
-                (c3, "Roll", f'{st.session_state.last_roll:.1f}°'
-                             f'{trend_arrow(st.session_state.last_roll, st.session_state.prev_roll)}', "Side deviation"),
+                (c2, "Pitch", f'{st.session_state.last_pitch:.1f}°{trend_arrow(st.session_state.last_pitch, st.session_state.prev_pitch)}', "Up / down flex"),
+                (c3, "Roll", f'{st.session_state.last_roll:.1f}°{trend_arrow(st.session_state.last_roll, st.session_state.prev_roll)}', "Side deviation"),
             ):
                 with col:
                     st.markdown(
@@ -342,7 +370,7 @@ def main() -> None:
             "border-color:rgba(255,93,93,0.3); background:linear-gradient(135deg, rgba(255,93,93,0.08), rgba(22,31,36,0.4));"
             if is_error else ""
         )
-        rec_head_color = COLOR_DANGER if is_error else COLOR_SAFE
+        rec_head_color = "#FF5D5D" if is_error else "#00C896"
         rec_icon = "⚠️" if is_error else "🤖"
         rec_placeholder.markdown(
             f'<div class="wr-rec-card" style="{rec_card_style}">'
@@ -361,24 +389,28 @@ def main() -> None:
             }).set_index("Timestamp")
             with chart_placeholder.container():
                 st.markdown('<div class="wr-card">', unsafe_allow_html=True)
-                st.line_chart(df_history, color=[COLOR_SAFE, COLOR_CAUTION], height=260)
+                st.line_chart(df_history, color=["#00C896", "#FFB800"], height=260)
                 st.markdown('</div>', unsafe_allow_html=True)
         else:
             chart_placeholder.markdown(
-                f'<div class="wr-card" style="text-align:center; color:{COLOR_MUTED}; padding:2.5rem 0;">'
+                f'<div class="wr-card" style="text-align:center; color:#888; padding:2.5rem 0;">'
                 f'No data yet — start monitoring to see live pitch &amp; roll history.</div>',
                 unsafe_allow_html=True,
             )
 
+    # 1. Call it once to render the static UI
     render_static_frame()
+    
     st.markdown(
         f'<div class="wr-footer">WRISTLY · CTS PREVENTION WEARABLE · NGN HACKS 2026</div>',
         unsafe_allow_html=True,
     )
 
+    # 2. Stop here if we aren't monitoring
     if not st.session_state.monitoring:
         return
 
+    # 3. Hardware reading loop
     try:
         reader = SerialSensorReader(port=port, baudrate=int(baudrate))
         for packet in reader.stream():
@@ -425,6 +457,6 @@ def main() -> None:
         st.session_state.monitoring = False
         logger.error(f"Connection error: {e}")
 
-
+# This part strictly hugs the left wall
 if __name__ == "__main__":
     main()

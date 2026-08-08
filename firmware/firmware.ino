@@ -194,6 +194,11 @@ void updateComplementaryFilter(float ax, float ay, float az, float gx, float gy)
   // Gyro Y integrates into pitch, Gyro X integrates into roll.
   pitch = ALPHA * (pitch + gy * DT) + (1.0 - ALPHA) * accelPitch;
   roll = ALPHA * (roll + gx * DT) + (1.0 - ALPHA) * accelRoll;
+
+  // Safety clamp: bounds output to a generous realistic wrist range so an
+  // overdriven simulator (or sensor glitch) can't produce nonsense values.
+  pitch = constrain(pitch, -120.0, 120.0);
+  roll = constrain(roll, -120.0, 120.0);
 }
 
 /**
